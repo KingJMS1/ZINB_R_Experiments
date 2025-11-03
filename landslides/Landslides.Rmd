@@ -1,0 +1,313 @@
+---
+title: "Landslides"
+author: "Mahlon Scott"
+date: "2025-05-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+library(jsonlite)
+library(ZINB.GP)
+library(sf)
+library(ggplot2)
+```
+
+## Oregon Landslide Dataset
+
+We'll use a sample dataset taken from the state of oregon, this dataset consists 
+of the locations of historical landslides occuring starting at 1928 and continuing 
+up to 2023, though the data is much denser in recent years as data collection 
+has increased. The raw dataset can be found here: https://arcg.is/OCST5. 
+
+### Simple Plots
+
+The most obvious useful covariate for landslide prediction is the variability in 
+elevation in an area, as areas that have large cliffs are naturally more likely to 
+have landslides occur, this relationship can be seen in the plots below.
+
+```{python, echo=FALSE}
+import geopandas as gpd
+import matplotlib.pyplot as plt
+elev = gpd.read_file("elev.geojson")
+landslides = gpd.read_file("landslidesKnownTime.geojson").to_crs("EPSG:4326")
+_ = elev.plot(column="elev_std", legend=True)
+_ = plt.title("Std. Dev of Elevation, 30 arcsec grid")
+_ = plt.xlabel("Longitude")
+_ = plt.ylabel("Latitude")
+plt.show()
+```
+```{python, echo=FALSE}
+_ = landslides.plot(alpha=0.5)
+_ = plt.title("Historical Oregon Landslide Locations")
+_ = plt.xlabel("Longitude")
+_ = plt.ylabel("Latitude")
+plt.show()
+```
+Grouping the data by county, we can apply a zero-inflated negative binomial model 
+to model the landslide frequency in each county. We then have an an s by t matrix, 
+where s is the number of counties, t is the number of years in the dataset, and 
+each entry is a nonnegative integer. The spatiotemporal random effects in the 
+ZINB_NNGP model will account for some of the additional spatial variability not 
+explained just by the standard deviation of the elevation in a region, as well 
+as some of the recording frequency variability.
+
+### Preprocessing the Dataset
+```{r}
+observations <- read.table("landslides_county_year.dat")
+observations
+```
+From this observation matrix, we can generate our response vector y, and the 
+spatial and temporal design matrices Vs and Vt.
+```{r}
+# Call the helper function for creating the design matrices from the observation 
+# matrix
+out <- make_y_Vs_Vt(observations)
+Vs <- out$Vs
+Vt <- out$Vt
+y <- out$y
+
+# Show quick example of contents of temporal design matrix, the first 6 
+# observations should correspond to the first time in this dataset.
+head(Vt)
+```
+
+We also need the spatial and temporal distance matrices between each pair of 
+positions in the dataset, aligned with the observations table above. Note that 
+these matrices should be scaled reasonably such that the maximum value in them 
+will not cause stability issues in the RBF kernel, values less than about 3 should 
+be fine. 
+
+An example of one way to perform this scaling will be shown for the temporal 
+design matrix below, which is to just do a min-max scaling. 
+For predictions at new locations, this scaling factor must be 
+saved to scale those in the same way.
+```{r}
+# Temporal design matrix
+Dt <- as.matrix(unname(read.table("time_dist.dat")))
+head(Dt)
+```
+```{r}
+scale_t <- max(Dt)
+Dt <- Dt / scale_t
+head(Dt)
+
+# Spatial design matrix, this is already scaled
+Ds <- as.matrix(unname(read.table("county_dist_scale.dat")))
+```
+
+Then, we need our covariates i.e. the std. dev of elevation (we average this 
+over the entire county in this case to provide a true county-level summary), 
+though the model can accept observation-specific predictors as well. 
+
+Since we conveniently have provided the spatial/temporal design matrices, one 
+can just multiply any spatial covariates by the spatial design, and temporal covariates 
+by the temporal design to get the required format for the covariates X.
+```{r}
+# Provide elev data on a county-by-county basis
+countyData <- read.csv("counties.csv")
+X <- Vs %*% countyData$county_elev_std
+
+# Add an intercept term to X
+X <- cbind(1, X)
+```
+
+Finally, with our data preprocessed, we just need the spatial coordinates for the 
+spatial NNGP approximation, and we can run the model. These must also be scaled 
+for use in Gaussian kernels, for analyses over larger areas, ensure to scale in 
+a way that minimally distorts distances between point.
+```{r}
+countyCoords <- as.matrix(unname(read.table("counties_coords.dat")))
+head(countyCoords)
+```
+
+### Results
+
+Now, let's run the model. This is how you would do it for our dataset.
+```{r, eval=FALSE}
+output <- ZINB_GP(X, y, countyCoords, Vs, Vt, Ds, Dt, nsim=22000, burn=2000, save_ypred = TRUE)
+```
+
+We've cached the output of this run in a file, let's load that instead of actually 
+running the model.
+```{r}
+output <- read_json("./output.json", simplifyVector=TRUE)
+```
+
+Now, we can show some example analyses.
+Plot typical values of model coefficients.
+```{r}
+Beta <- output$Beta
+boxplot(Beta[,2], main="Elev_STD Coefficient, NB model")
+boxplot(Beta[,1], main="Intercept, NB model")
+```
+```{r}
+Alpha <- output$Alpha
+boxplot(Alpha[,2], main="Elev_STD Coefficient, Logit model")
+boxplot(Alpha[,1], main="Intercept, Logit model")
+```
+Unsurprisingly, we see that the non random-effect predictors have more influence 
+in the NB model.
+
+95% CIs for model coefficients, both intercept and Elev_STD are significant in the 
+NB model.
+```{r}
+cat("Intercept CI (NB): \n")
+quantile(Beta[,1], c(0.025, 0.975))
+cat("\nElev_STD CI (NB): \n")
+quantile(Beta[,2], c(0.025, 0.975))
+```
+
+Now, let's look at the random effects.
+```{r}
+counties <- st_read("./orCounties.geojson")
+counties$NB_effect <- colMeans(output$A)
+plot(counties["NB_effect"])
+```
+
+```{r}
+counties$Logit_effect <- colMeans(output$C)
+plot(counties["Logit_effect"])
+```
+We see that the left side of the map is much more likely to be at risk of receiving landslides 
+than the right side, and that when these counties are at risk, counties like 
+Multnomah and Lane are more likely to have more landslides relative to the 
+other counties, after accounting for the effect of variability of elevation within each 
+county.
+
+Now, we can investigate the temporal random effects
+```{r}
+years <- read.csv("./Years.csv")$X0
+plot(years, colMeans(output$B), main="Temporal Effects, NB model")
+```
+
+It seems that as time goes on, the frequency of observed landslides increases, 
+presumably this is primarily due to better recording of landslides in the modern 
+era.
+
+```{r}
+plot(years, colMeans(output$D), main="Temporal Effects, Logit model")
+```
+It looks like sometime in the 1950s, there were quite a lot of landslides all over 
+the state. Looking at the historical record, we see that there was a large flood 
+of the Willamette river valley around this time. In the observations, the counties 
+with many landslides are all near the Willamette river valley, as seen below, and 
+this is likely a significant contributing factor to the increase of landslides here.
+```{r}
+counties$obs96 <- log(observations[, colMeans(output$D) > 2][,1] + 1)
+plot(counties["obs96"], main = "1996 Observed Landslides, Log Scale")
+```
+
+
+
+Now, we can answer a potentially interesting question: If an event near the severity 
+of the flood in 1996 was to occur again next year, which counties would likely 
+have the most landslides, and what are likely bounds on the number of landslides 
+that would occur?
+
+```{r}
+# Index of 1996
+i <- 37
+years[i]
+
+ind_1996 <- Vt[,i] == 1
+preds_1996 <- output$Y_pred[, ind_1996]
+counties$pred96 <- colMeans(log(preds_1996 + 1))
+plot(counties["pred96"], main="Posterior Mean: Landslides, New Year like 1996, Log Scale")
+```
+
+```{r}
+# 95% CIs for each county 
+quants <- apply(preds_1996, 2, quantile, probs=c(0.01, 0.99))
+counties$p99.96 <- log(quants[2,] + 1)
+plot(counties["p99.96"], main="Posterior 99th Percentile: New Year like 1996, Log Scale")
+```
+
+Since the model typically sees that the most landslides occur in Multnomah, it 
+predicts that this county is at high risk if a severe 
+landslide causing event, similar to the flood that caused many landslides in the 
+counties below it was to occur there. 
+
+Importantly, we see that our predictions have 
+reasonable variance, as all counties observed levels below the 99th percentile 
+of the posterior in 1996, as shown below.
+```{r}
+all(counties$obs96 < quants[2,])
+```
+
+### Additional Results
+Here we show all of the typical plots and results required for validation of 
+this type of model. 
+
+Trace plots
+Only the first of each type of random effect will be shown.
+
+```{r}
+xs = 1:20000
+for (name in names(output))
+{
+  if (name == "Y_pred")
+  {
+    
+  }
+  else if (name == "at_risk")
+  {
+    
+  }
+  else
+  {
+    yy = output[[name]]
+    if (is.null(nrow(yy)))
+    {
+      plot(xs, yy, type="b", main=name)
+    }
+    else
+    {
+      if (ncol(yy) > 4)
+      {
+        plot(xs, yy[,1], type="b", main=paste(name, zi, sep=", "))
+      }
+      else
+      {
+        for (zi in 1:ncol(yy))
+        {
+          plot(xs, yy[,zi], type="b", main=paste(name, zi, sep=", "))
+        }
+      }
+    } 
+  }
+}
+```
+
+95% Credible Intervals (Quantile based)
+```{r}
+xs = 1:20000
+for (name in names(output))
+{
+  if (name == "Y_pred")
+  {
+    
+  }
+  else if (name == "at_risk")
+  {
+    
+  }
+  else
+  {
+    yy = output[[name]]
+    if (is.null(nrow(yy)))
+    {
+      cat(paste(name, " 95% CI:\n"))
+      print(quantile(yy, probs=c(0.025, 0.975)))
+      cat("\n")
+    }
+    else
+    {
+      cat(paste(name, " 95% CIs:\n"))
+      print(apply(yy, 2, quantile, probs=c(0.025, 0.975)))
+      cat("\n")
+    } 
+  }
+}
+```
