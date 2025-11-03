@@ -5,7 +5,7 @@
 #SBATCH --time=24:00:00
 #SBATCH --output=conv_analysis_model_run_%j_%a.txt
 #SBATCH --job-name=conv_analysis_model
-#SBATCH --array=1-100
+#SBATCH --array=1-200
 
 module load anaconda
 conda activate renv
