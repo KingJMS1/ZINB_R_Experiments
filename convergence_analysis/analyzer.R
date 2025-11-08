@@ -41,35 +41,36 @@ sigma2s <- 1
 spatial_noise <- 0.5
 temporal_noise <- 0.2
 
+repNum <- 200
 
-l1tcover <- matrix(0, nrow=100, ncol=length(obs_nums))
-l2tcover <- matrix(0, nrow=100, ncol=length(obs_nums))
+l1tcover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+l2tcover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 
-sigma1tcover <- matrix(0, nrow=100, ncol=length(obs_nums))
-sigma2tcover <- matrix(0, nrow=100, ncol=length(obs_nums))
+sigma1tcover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+sigma2tcover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 
-sigma1scover <- matrix(0, nrow=100, ncol=length(obs_nums))
-sigma2scover <- matrix(0, nrow=100, ncol=length(obs_nums))
+sigma1scover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+sigma2scover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 
-l1scover <- matrix(0, nrow=100, ncol=length(obs_nums))
-l2scover <- matrix(0, nrow=100, ncol=length(obs_nums))
+l1scover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+l2scover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 
-snoisecover <- matrix(0, nrow=100, ncol=length(obs_nums))
-tnoisecover <- matrix(0, nrow=100, ncol=length(obs_nums))
+snoisecover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+tnoisecover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 
-alphacover <- matrix(0, nrow=100, ncol=length(obs_nums))
-betacover <- matrix(0, nrow=100, ncol=length(obs_nums))
+alphacover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+betacover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 
-acover <- matrix(0, nrow=100, ncol=length(obs_nums))
-bcover <- matrix(0, nrow=100, ncol=length(obs_nums))
-ccover <- matrix(0, nrow=100, ncol=length(obs_nums))
-dcover <- matrix(0, nrow=100, ncol=length(obs_nums))
+acover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+bcover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+ccover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+dcover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 
 j <- 1
 for (obs_num in obs_nums)
 {
     print(obs_num)
-    for (i in 1:200)
+    for (i in 1:repNum)
     {
         cat(paste(" ", i, "\n"))
         filename1 <- paste("out_", obs_num, "_rep_", i, ".rda", sep = "")
