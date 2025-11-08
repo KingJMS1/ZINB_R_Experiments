@@ -66,6 +66,9 @@ bcover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 ccover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 dcover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
 
+ycover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+rcover <- matrix(0, nrow=repNum, ncol=length(obs_nums))
+
 j <- 1
 for (obs_num in obs_nums)
 {
@@ -103,6 +106,9 @@ for (obs_num in obs_nums)
         bcover[i,j] <- coverageM(b, output$B)
         ccover[i,j] <- coverageM(c, output$C)
         dcover[i,j] <- coverageM(d, output$D)
+
+        ycover[i, j] <- coverageM(y, output$Y_pred)
+        rcover[i, j] <- coverage(2, output$R)
 
         # Delete output
         rm(list=c("X", "y", "coords", "Vs", "Vt", "Ds", "Dt", "u", "a", "b", "c", "d", "output"))
