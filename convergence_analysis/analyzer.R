@@ -69,7 +69,7 @@ j <- 1
 for (obs_num in obs_nums)
 {
     print(obs_num)
-    for (i in 1:100)
+    for (i in 1:200)
     {
         cat(paste(" ", i, "\n"))
         filename1 <- paste("out_", obs_num, "_rep_", i, ".rda", sep = "")
