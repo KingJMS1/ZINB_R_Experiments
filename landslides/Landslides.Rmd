@@ -89,12 +89,12 @@ Dt <- as.matrix(unname(read.table("time_dist.dat")))
 head(Dt)
 ```
 ```{r}
-scale_t <- max(Dt)
+scale_t <- 0.0001 * max(Dt) # Set a reasonable scale for the time matrix
 Dt <- Dt / scale_t
 head(Dt)
 
-# Spatial design matrix, this is already scaled
-Ds <- as.matrix(unname(read.table("county_dist_scale.dat")))
+# Spatial design matrix, set a reasonable scale here as well
+Ds <- as.matrix(unname(read.table("county_dist_scale.dat"))) * 100
 ```
 
 Then, we need our covariates i.e. the std. dev of elevation (we average this 
@@ -107,7 +107,7 @@ by the temporal design to get the required format for the covariates X.
 ```{r}
 # Provide elev data on a county-by-county basis
 countyData <- read.csv("counties.csv")
-X <- Vs %*% countyData$county_elev_std
+X <- Vs %*% countyData$county_elev_std[2:length(countyData$county_elev_std)] # Note this does ignore the covariate at the intercept
 
 # Add an intercept term to X
 X <- cbind(1, X)
@@ -126,13 +126,18 @@ head(countyCoords)
 
 Now, let's run the model. This is how you would do it for our dataset.
 ```{r, eval=FALSE}
-output <- ZINB_GP(X, y, countyCoords, Vs, Vt, Ds, Dt, nsim=22000, burn=2000, save_ypred = TRUE)
+# Set a prior for the temporal length scale, this ensures that it will be accepted somewhat frequently
+# Note that this sampler needs to be run for much longer, more like 300000 iterations to get reasonable convergence
+# on this dataset, this is just for demonstration.
+ltprior <- list(max = 16, mh_sd = 0.5, a = 1, b = 0.001)
+output <- ZINB_GP(X, y, countyCoords, Vs, Vt, Ds, Dt, nsim=20000, burn=2000, print_progress = TRUE, thin=12, save_ypred = TRUE)
 ```
 
-We've cached the output of this run in a file, let's load that instead of actually 
+We've cached the output of a much longer run in a file, let's load that instead of actually 
 running the model.
 ```{r}
-output <- read_json("./output.json", simplifyVector=TRUE)
+# Loads the output variable from the model.
+load("outMat.rda")
 ```
 
 Now, we can show some example analyses.
@@ -147,11 +152,8 @@ Alpha <- output$Alpha
 boxplot(Alpha[,2], main="Elev_STD Coefficient, Logit model")
 boxplot(Alpha[,1], main="Intercept, Logit model")
 ```
-Unsurprisingly, we see that the non random-effect predictors have more influence 
-in the NB model.
 
-95% CIs for model coefficients, both intercept and Elev_STD are significant in the 
-NB model.
+95% CIs for model coefficients, no coefficients are significant in the NB model, the spatial/temporal effects seem to dominate.
 ```{r}
 cat("Intercept CI (NB): \n")
 quantile(Beta[,1], c(0.025, 0.975))
@@ -162,66 +164,70 @@ quantile(Beta[,2], c(0.025, 0.975))
 Now, let's look at the random effects.
 ```{r}
 counties <- st_read("./orCounties.geojson")
-counties$NB_effect <- colMeans(output$A)
-plot(counties["NB_effect"])
+counties$NB_effect <- c(mean(output$Beta[,1]),colMeans(output$C))
+plot(counties["NB_effect"], axes=TRUE)
 ```
 
 ```{r}
-counties$Logit_effect <- colMeans(output$C)
-plot(counties["Logit_effect"])
+counties$Logit_effect <- c(mean(output$Alpha[,1]),colMeans(output$A))
+plot(counties["Logit_effect"], axes=TRUE)
 ```
-We see that the left side of the map is much more likely to be at risk of receiving landslides 
-than the right side, and that when these counties are at risk, counties like 
-Multnomah and Lane are more likely to have more landslides relative to the 
-other counties, after accounting for the effect of variability of elevation within each 
-county.
+We see that the Multnomah county is much more likely to be at risk of receiving landslides 
+than the rest of the counties. When counties are at risk, the left side of the state is more likely to 
+receive more landslides than the right side of the state.
 
 Now, we can investigate the temporal random effects
 ```{r}
 years <- read.csv("./Years.csv")$X0
-plot(years, colMeans(output$B), main="Temporal Effects, NB model")
+plot(years, c(mean(output$Alpha[,1]), colMeans(output$B)), main="Temporal Effects, NB model")
 ```
 
 It seems that as time goes on, the frequency of observed landslides increases, 
-presumably this is primarily due to better recording of landslides in the modern 
-era.
+perhaps this is due to better recording of landslides in the modern 
+era? It appears that the temporal effects for the logistic (at-risk) model are unaffected however.
 
 ```{r}
-plot(years, colMeans(output$D), main="Temporal Effects, Logit model")
+plot(years, c(mean(output$Beta[,1]), colMeans(output$D)), main="Temporal Effects, Logit model")
 ```
-It looks like sometime in the 1950s, there were quite a lot of landslides all over 
+It looks like sometime in the 1990s, there were quite a lot of landslides all over 
 the state. Looking at the historical record, we see that there was a large flood 
 of the Willamette river valley around this time. In the observations, the counties 
 with many landslides are all near the Willamette river valley, as seen below, and 
 this is likely a significant contributing factor to the increase of landslides here.
-```{r}
-counties$obs96 <- log(observations[, colMeans(output$D) > 2][,1] + 1)
-plot(counties["obs96"], main = "1996 Observed Landslides, Log Scale")
-```
-
-
 
 Now, we can answer a potentially interesting question: If an event near the severity 
 of the flood in 1996 was to occur again next year, which counties would likely 
 have the most landslides, and what are likely bounds on the number of landslides 
-that would occur?
+that would occur? We can look at the at risk probability:
 
 ```{r}
-# Index of 1996
-i <- 37
-years[i]
+logit <- \(x) log(x / (1 - x))
+sigmoid <- \(x) 1 / (1 + exp(-x))
 
-ind_1996 <- Vt[,i] == 1
-preds_1996 <- output$Y_pred[, ind_1996]
-counties$pred96 <- colMeans(log(preds_1996 + 1))
-plot(counties["pred96"], main="Posterior Mean: Landslides, New Year like 1996, Log Scale")
+susceptAvg <- rowMeans(sigmoid(Vs %*% t(output$A) + quantile(output$B[,36], 0.90) + X %*% t(output$Alpha))) %*% Vs / 64
+# Add an entry for the intercept county, 
+counties$lr_suscept_avg <- c(sigmoid(quantile(output$B[,36], 0.9) + mean(output$Alpha[,1])), susceptAvg)
+plot(counties["lr_suscept_avg"], main="At Risk Probability, Average, Extreme Event like 1996", axes=TRUE)
 ```
 
+And the NB results:
+
 ```{r}
-# 95% CIs for each county 
-quants <- apply(preds_1996, 2, quantile, probs=c(0.01, 0.99))
-counties$p99.96 <- log(quants[2,] + 1)
-plot(counties["p99.96"], main="Posterior 99th Percentile: New Year like 1996, Log Scale")
+# Simulate results of other years like 1996
+int_rows <- apply(Vs == 0, 1, all)
+p <- sigmoid(Vs %*% t(output$C) + quantile(output$D[,36], 0.90) + X %*% t(output$Beta))
+rands <- matrix(0, nrow=nrow(p), ncol=ncol(p))
+for (i in 1:nrow(p))
+{
+    for(j in 1:ncol(p))
+    {
+        rands[i,j] <- rnbinom(n=1, size=output$R[j], prob=(1 - p[i,j]))
+    }
+}
+avgSlides <- rowMeans((t(Vs) %*% rands) / 64)
+# Add an entry for the intercept
+counties$nb_res_avg <- (c(mean(apply(rands[int_rows,], 2, sum) / 64) * sigmoid(quantile(output$B[,36], 0.9) + mean(output$Alpha[,1])), avgSlides * susceptAvg))
+plot(counties["nb_res_avg"], main="Posterior Mean Landslides, Event worse than 1996 Flood", axes=TRUE, breaks=c(1, 5, 10, 50, 100, 500, 1000, 5000, 10000, 20000))
 ```
 
 Since the model typically sees that the most landslides occur in Multnomah, it 
@@ -229,85 +235,4 @@ predicts that this county is at high risk if a severe
 landslide causing event, similar to the flood that caused many landslides in the 
 counties below it was to occur there. 
 
-Importantly, we see that our predictions have 
-reasonable variance, as all counties observed levels below the 99th percentile 
-of the posterior in 1996, as shown below.
-```{r}
-all(counties$obs96 < quants[2,])
-```
-
-### Additional Results
-Here we show all of the typical plots and results required for validation of 
-this type of model. 
-
-Trace plots
-Only the first of each type of random effect will be shown.
-
-```{r}
-xs = 1:20000
-for (name in names(output))
-{
-  if (name == "Y_pred")
-  {
-    
-  }
-  else if (name == "at_risk")
-  {
-    
-  }
-  else
-  {
-    yy = output[[name]]
-    if (is.null(nrow(yy)))
-    {
-      plot(xs, yy, type="b", main=name)
-    }
-    else
-    {
-      if (ncol(yy) > 4)
-      {
-        plot(xs, yy[,1], type="b", main=paste(name, zi, sep=", "))
-      }
-      else
-      {
-        for (zi in 1:ncol(yy))
-        {
-          plot(xs, yy[,zi], type="b", main=paste(name, zi, sep=", "))
-        }
-      }
-    } 
-  }
-}
-```
-
-95% Credible Intervals (Quantile based)
-```{r}
-xs = 1:20000
-for (name in names(output))
-{
-  if (name == "Y_pred")
-  {
-    
-  }
-  else if (name == "at_risk")
-  {
-    
-  }
-  else
-  {
-    yy = output[[name]]
-    if (is.null(nrow(yy)))
-    {
-      cat(paste(name, " 95% CI:\n"))
-      print(quantile(yy, probs=c(0.025, 0.975)))
-      cat("\n")
-    }
-    else
-    {
-      cat(paste(name, " 95% CIs:\n"))
-      print(apply(yy, 2, quantile, probs=c(0.025, 0.975)))
-      cat("\n")
-    } 
-  }
-}
-```
+Trace plots for this run can be found in the trace folder if interested.

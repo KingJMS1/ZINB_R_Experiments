@@ -58,5 +58,5 @@ print(head(X))
 #################
 # Run for a short time for demo purposes
 cat("Running Model\n")
-output <- ZINB_GP(X, y, coords, Vs, Vt, Ds, Dt, M = 10, 40000, 2000, 40, TRUE, print_progress = TRUE)
-save(list=c("output"), file="out.rda")
+output <- ZINB_GP(X, y, coords, Vs, Vt, Ds, Dt, M = 10, 6000, 1000, 4, TRUE, print_progress = TRUE)
+save(list=c("output"), file="outMat.rda")
