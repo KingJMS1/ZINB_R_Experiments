@@ -18,7 +18,7 @@ X <- Vs %*% countyData$county_elev_std[2:length(countyData$county_elev_std)] # N
 X <- cbind(1, X)
 ltprior <- list(max = 16, mh_sd = 0.5, a = 1, b = 0.001)
 
-# Matern kernel, v=3/2
+# Example Matern kernel, v=3/2, squared exponential is used in the paper.
 kernel <- function(dist.sq, ls) {
     return((1 + (sqrt(3 * dist.sq) / ls)) * exp(-sqrt(3 * dist.sq) / ls))
 }
