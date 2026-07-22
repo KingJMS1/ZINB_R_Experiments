@@ -1,4 +1,4 @@
-Experiments for the ZINB.GP package (https://github.com/KingJMS1/NNGP_ZINB_R).
+Experiments for the ZINB.GP package (https://github.com/KingJMS1/GP_ZINB_R).
 
 convergence_analysis contains code needed to run simulations to evaluate model convergence and coverage.
 
